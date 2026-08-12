@@ -4,7 +4,6 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 
-# ---------- AI structured output schemas ----------
 
 class CandidateSkill(BaseModel):
     name: str
@@ -14,7 +13,7 @@ class CandidateSkill(BaseModel):
 
 class CandidateAIProfile(BaseModel):
     skills: list[CandidateSkill] = Field(default_factory=list)
-    experience_years: float = 0
+    experience_years: float | None = None
     english_level: str | None = None
     education: list[str] = Field(default_factory=list)
     summary: str
