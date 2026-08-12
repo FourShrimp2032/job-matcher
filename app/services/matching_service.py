@@ -8,6 +8,8 @@ IMPORTANCE_WEIGHT = {
     "optional": 0.2,
 }
 
+UNKNOWN_EVIDENCE_SCORE = 50.0
+
 MATCH_VALUE = {
     "match": 1.0,
     "partial": 0.5,
@@ -85,6 +87,25 @@ def compare_skill(requirement: str, candidate_skills: list[str]) -> tuple[str, s
 
     return "missing", None, best_ratio
 
+def _calculate_experience(
+    candidate_years: float | None,
+    required_years: float | None,
+) -> tuple[float, str]:
+
+    if required_years is None or required_years <= 0:
+        return 100.0, "not_required"
+
+    if candidate_years is None:
+        return UNKNOWN_EVIDENCE_SCORE, "unknown"
+
+    if candidate_years >= required_years:
+        return 100.0, "meets"
+
+    if candidate_years > 0:
+        score = (candidate_years / required_years) * 100
+        return score, "partial"
+
+    return 0.0, "below"
 
 def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
     candidate_skill_objects = candidate_profile.get("skills", [])
@@ -124,13 +145,13 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
 
     skills_score = (weighted_earned / weighted_total * 100) if weighted_total else 0.0
 
-    candidate_years = float(candidate_profile.get("experience_years") or 0)
+    candidate_years = candidate_profile.get("experience_years")
     required_years = job_profile.get("experience_years_required")
 
-    if required_years is None or required_years == 0:
-        experience_score = 100.0
-    else:
-        experience_score = min(candidate_years / float(required_years), 1.0) * 100
+    experience_score, experience_status = _calculate_experience(
+        candidate_years,
+        required_years,
+    )
 
     final_score = skills_score * 0.85 + experience_score * 0.15
     final_score = round(final_score, 1)
@@ -153,6 +174,7 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         "recommendation": recommendation,
         "skills_score": round(skills_score, 1),
         "experience_score": round(experience_score, 1),
+        "experience_status": experience_status,
         "candidate_experience_years": candidate_years,
         "required_experience_years": required_years,
         "required_missing": required_missing,
