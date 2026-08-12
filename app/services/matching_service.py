@@ -219,6 +219,21 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         if item["importance"] == "required" and item["status"] == "missing"
     ]
 
+    required_partial = [
+        item["requirement"]
+        for item in skill_results
+        if item["importance"] == "required"
+        and item["status"] == "partial"
+    ]
+
+    unknown_fields = []
+
+    if experience_status == "unknown":
+        unknown_fields.append("experience_years")
+
+    if english_status == "unknown":
+        unknown_fields.append("english_level")
+
     if final_score >= 80 and len(required_missing) <= 1:
         recommendation = "APPLY"
     elif final_score >= 60:
@@ -244,5 +259,7 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
                     "english": ENGLISH_WEIGHT,
                 },
         "required_missing": required_missing,
+        "required_partial": required_partial,
+        "unknown_fields": unknown_fields,
         "skills": skill_results,
     }
