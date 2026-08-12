@@ -25,14 +25,36 @@ ALIASES = {
     "restful apis": "rest api",
     "rest apis": "rest api",
     "git hub": "github",
+    "rest api development": "rest api",
+    "rest apis": "rest api",
+    "restful api": "rest api",
+    "restful apis": "rest api",
 }
 
+RELATED_SKILL_GROUPS = [
+    {
+        "rest api",
+        "backend api",
+        "backend api development",
+        "api development",
+        "web api",
+        "http api",
+        "restful services",
+    },
+]
 
 def normalize_skill(value: str) -> str:
     value = value.lower().strip()
     value = re.sub(r"[._/+\-]", " ", value)
     value = re.sub(r"\s+", " ", value)
     return ALIASES.get(value, value)
+
+def _same_related_group(left: str, right: str) -> bool:
+    for group in RELATED_SKILL_GROUPS:
+        if left in group and right in group:
+            return True
+
+    return False
 
 
 def compare_skill(requirement: str, candidate_skills: list[str]) -> tuple[str, str | None, float]:
@@ -45,8 +67,8 @@ def compare_skill(requirement: str, candidate_skills: list[str]) -> tuple[str, s
 
 
     for original, normalized in normalized_candidates:
-        if required in normalized or normalized in required:
-            return "partial", original, 0.65
+        if _same_related_group(required, normalized):
+            return "partial", original, 0.78
 
     best_skill = None
     best_ratio = 0.0
