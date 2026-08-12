@@ -129,14 +129,3 @@ Example result shape:
   }
 }
 ```
-
-## Next versions
-
-- PDF/DOCX CV upload
-- PostgreSQL
-- semantic matching with embeddings
-- interview question generator
-- learning plan from missing skills
-- vacancy URL scraping
-- application statuses and dashboard
-- frontend
