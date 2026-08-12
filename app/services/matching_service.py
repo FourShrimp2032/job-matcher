@@ -8,6 +8,18 @@ IMPORTANCE_WEIGHT = {
     "optional": 0.2,
 }
 
+SKILLS_WEIGHT = 0.75
+EXPERIENCE_WEIGHT = 0.15
+ENGLISH_WEIGHT = 0.10
+
+CEFR_LEVELS = {
+    "a1": 1,
+    "a2": 2,
+    "b1": 3,
+    "b2": 4,
+    "c1": 5,
+    "c2": 6,
+}
 UNKNOWN_EVIDENCE_SCORE = 50.0
 
 MATCH_VALUE = {
@@ -107,6 +119,40 @@ def _calculate_experience(
 
     return 0.0, "below"
 
+def _extract_cefr(value: str | None) -> int | None:
+    if not value:
+        return None
+
+    match = re.search(r"\b([abc][12])\b", value.lower())
+
+    if not match:
+        return None
+
+    return CEFR_LEVELS[match.group(1)]
+
+def _calculate_english(
+    candidate_level: str | None,
+    required_level: str | None,
+) -> tuple[float, str]:
+
+    required = _extract_cefr(required_level)
+
+    if required is None:
+        return 100.0, "not_required"
+
+    candidate = _extract_cefr(candidate_level)
+
+    if candidate is None:
+        return UNKNOWN_EVIDENCE_SCORE, "unknown"
+
+    if candidate >= required:
+        return 100.0, "meets"
+
+    if candidate == required - 1:
+        return 60.0, "partial"
+
+    return 0.0, "below"
+
 def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
     candidate_skill_objects = candidate_profile.get("skills", [])
     candidate_skills = [item.get("name", "") for item in candidate_skill_objects if item.get("name")]
@@ -152,8 +198,19 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         candidate_years,
         required_years,
     )
+    candidate_english = candidate_profile.get("english_level")
+    required_english = job_profile.get("english_level")
 
-    final_score = skills_score * 0.85 + experience_score * 0.15
+    english_score, english_status = _calculate_english(
+        candidate_english,
+        required_english,
+    )
+
+    final_score = (
+        skills_score * SKILLS_WEIGHT
+        + experience_score * EXPERIENCE_WEIGHT
+        + english_score * ENGLISH_WEIGHT
+    )
     final_score = round(final_score, 1)
 
     required_missing = [
@@ -175,8 +232,17 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         "skills_score": round(skills_score, 1),
         "experience_score": round(experience_score, 1),
         "experience_status": experience_status,
+        "english_score": round(english_score, 1),
+        "english_status": english_status,
+        "candidate_english_level": candidate_english,
+        "required_english_level": required_english,
         "candidate_experience_years": candidate_years,
         "required_experience_years": required_years,
+        "score_weights": {
+                    "skills": SKILLS_WEIGHT,
+                    "experience": EXPERIENCE_WEIGHT,
+                    "english": ENGLISH_WEIGHT,
+                },
         "required_missing": required_missing,
         "skills": skill_results,
     }
