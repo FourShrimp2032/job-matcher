@@ -6,3 +6,4 @@ python-dotenv
 openai
 pypdf
 python-multipart
+sentence-transformers
