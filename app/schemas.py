@@ -25,6 +25,7 @@ class JobRequirement(BaseModel):
     importance: Literal["required", "preferred", "optional"] = "required"
     description: str = ""
     capabilities: list[str] = Field(default_factory=list)
+    alternatives: list[str] = Field(default_factory=list)
 
 
 class JobAIProfile(BaseModel):

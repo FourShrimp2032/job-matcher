@@ -10,11 +10,12 @@ from app.services.local_embedding_service import (
     generate_query_embeddings,
 )
 
-
-
 SEMANTIC_MIN_SCORE = 0.85
 SEMANTIC_MIN_MARGIN = 0.02
 
+PREFERRED_BONUS_POINTS = 2.0
+OPTIONAL_BONUS_POINTS = 1.0
+MAX_SKILL_BONUS = 10.0
 
 IMPORTANCE_WEIGHT = {
     "required": 1.0,
@@ -79,6 +80,30 @@ RELATED_SKILL_GROUPS = [
         "relational databases",
     },
 ]
+
+GENERIC_SKILL_WORDS = {
+    "integration",
+    "development",
+    "programming",
+    "framework",
+    "frameworks",
+    "service",
+    "services",
+    "system",
+    "systems",
+    "application",
+    "applications",
+}
+
+
+def _has_meaningful_token_overlap(
+    left: str,
+    right: str,
+) -> bool:
+    left_tokens = set(left.split()) - GENERIC_SKILL_WORDS
+    right_tokens = set(right.split()) - GENERIC_SKILL_WORDS
+
+    return bool(left_tokens & right_tokens)
 
 def normalize_skill(value: str) -> str:
     value = value.lower().strip()
@@ -146,6 +171,7 @@ def _same_related_group(left: str, right: str) -> bool:
 def compare_skill(
     requirement: str,
     candidate_skills: list[str],
+    requirement_alternatives: list[str] | None = None,
     requirement_capabilities: list[str] | None = None,
     candidate_skill_capabilities: dict[str, list[str]] | None = None,
     requirement_text: str | None = None,
@@ -165,6 +191,20 @@ def compare_skill(
         if normalized == required:
             return "match", original, 1.0, "exact"
 
+    if requirement_alternatives:
+        normalized_alternatives = {
+            normalize_skill(alternative)
+            for alternative in requirement_alternatives
+        }
+
+        for original, normalized in normalized_candidates:
+            if normalized in normalized_alternatives:
+                return (
+                    "match",
+                    original,
+                    1.0,
+                    "alternative",
+                )
     # 2. Known deterministic relationships
     for original, normalized in normalized_candidates:
         if _same_related_group(required, normalized):
@@ -230,6 +270,12 @@ def compare_skill(
             required,
             normalized,
         ).ratio()
+
+        if not _has_meaningful_token_overlap(
+            required,
+            normalized,
+        ):
+            continue
 
         if ratio > best_ratio:
             best_ratio = ratio
@@ -369,6 +415,10 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         item["skill"]: item.get("capabilities", [])
         for item in requirements
     }
+    requirement_alternatives = {
+        item["skill"]: item.get("alternatives", [])
+        for item in requirements
+    }
 
     try:
         query_embeddings = generate_query_embeddings(
@@ -383,8 +433,14 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         query_embeddings = {}
         passage_embeddings = {}
 
-    weighted_total = 0.0
-    weighted_earned = 0.0
+    required_total = 0.0
+    required_earned = 0.0
+
+    non_required_total = 0.0
+    non_required_earned = 0.0
+
+    bonus_points = 0.0
+
     skill_results = []
 
     for requirement in requirements:
@@ -397,6 +453,10 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         status, candidate_skill, confidence, match_method = compare_skill(
             skill,
             candidate_skills,
+            requirement_alternatives=requirement_alternatives.get(
+                skill,
+                [],
+            ),
             requirement_capabilities=requirement_capabilities.get(
                 skill,
                 [],
@@ -447,8 +507,54 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         else:
             strength = 0.0
 
-        weighted_total += weight
-        weighted_earned += weight * strength
+        if importance == "required":
+            possible = 1.0
+            earned = strength
+
+            required_total += possible
+            required_earned += earned
+
+            score_role = "base"
+
+        elif importance == "preferred":
+            possible = PREFERRED_BONUS_POINTS
+            earned = possible * strength
+
+            bonus_points += earned
+
+            non_required_total += IMPORTANCE_WEIGHT.get(
+                importance,
+                0.5,
+            )
+            non_required_earned += (
+                IMPORTANCE_WEIGHT.get(
+                    importance,
+                    0.5,
+                )
+                * strength
+            )
+
+            score_role = "bonus"
+
+        else:
+            possible = OPTIONAL_BONUS_POINTS
+            earned = possible * strength
+
+            bonus_points += earned
+
+            non_required_total += IMPORTANCE_WEIGHT.get(
+                importance,
+                0.2,
+            )
+            non_required_earned += (
+                IMPORTANCE_WEIGHT.get(
+                    importance,
+                    0.2,
+                )
+                * strength
+            )
+
+            score_role = "bonus"
 
         skill_results.append(
             {
@@ -460,12 +566,42 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
                 "match_method": match_method,
                 "matched_capabilities": matched_capabilities,
                 "missing_capabilities": missing_capabilities,
-                "earned": round(weight * strength, 3),
-                "possible": weight,
+                "score_role": score_role,
+                "earned": round(earned, 3),
+                "possible": possible,
             }
         )
 
-    skills_score = (weighted_earned / weighted_total * 100) if weighted_total else 0.0
+    if required_total > 0:
+        required_skills_score = (
+            required_earned
+            / required_total
+            * 100
+        )
+
+        skill_bonus = min(
+            bonus_points,
+            MAX_SKILL_BONUS,
+        )
+
+        skills_score = min(
+            required_skills_score + skill_bonus,
+            100.0,
+        )
+
+    else:
+        # Fallback for unusual vacancies that contain
+        # only preferred/optional technical requirements.
+        required_skills_score = 0.0
+        skill_bonus = 0.0
+
+        skills_score = (
+            non_required_earned
+            / non_required_total
+            * 100
+            if non_required_total
+            else 0.0
+        )
 
     candidate_years = candidate_profile.get("experience_years")
     required_years = job_profile.get("experience_years_required")
@@ -597,6 +733,14 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         "recommendation": recommendation,
         "recommendation_reasons": recommendation_reasons,
         "skills_score": round(skills_score, 1),
+        "required_skills_score": round(
+            required_skills_score,
+            1,
+        ),
+        "skill_bonus": round(
+            skill_bonus,
+            1,
+        ),
         "experience_score": round(experience_score, 1),
         "experience_status": experience_status,
         "english_score": round(english_score, 1),
