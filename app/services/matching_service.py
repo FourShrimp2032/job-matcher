@@ -1,6 +1,20 @@
 import re
 from difflib import SequenceMatcher
 
+from app.services.local_embedding_service import (
+    EmbeddingServiceError,
+    build_candidate_skill_text,
+    build_requirement_text,
+    find_best_semantic_match,
+    generate_passage_embeddings,
+    generate_query_embeddings,
+)
+
+
+
+SEMANTIC_MIN_SCORE = 0.85
+SEMANTIC_MIN_MARGIN = 0.02
+
 
 IMPORTANCE_WEIGHT = {
     "required": 1.0,
@@ -72,6 +86,30 @@ def normalize_skill(value: str) -> str:
     value = re.sub(r"\s+", " ", value)
     return ALIASES.get(value, value)
 
+def _capability_overlap(
+    required_capabilities: list[str],
+    candidate_capabilities: list[str],
+) -> tuple[int, float]:
+    if not required_capabilities or not candidate_capabilities:
+        return 0, 0.0
+
+    required = {
+        normalize_skill(capability)
+        for capability in required_capabilities
+    }
+
+    candidate = {
+        normalize_skill(capability)
+        for capability in candidate_capabilities
+    }
+
+    common = required & candidate
+
+    overlap_count = len(common)
+    coverage = overlap_count / len(required)
+
+    return overlap_count, coverage
+
 def _same_related_group(left: str, right: str) -> bool:
     for group in RELATED_SKILL_GROUPS:
         if left in group and right in group:
@@ -80,33 +118,135 @@ def _same_related_group(left: str, right: str) -> bool:
     return False
 
 
-def compare_skill(requirement: str, candidate_skills: list[str]) -> tuple[str, str | None, float]:
+def compare_skill(
+    requirement: str,
+    candidate_skills: list[str],
+    requirement_capabilities: list[str] | None = None,
+    candidate_skill_capabilities: dict[str, list[str]] | None = None,
+    requirement_text: str | None = None,
+    candidate_skill_texts: dict[str, str] | None = None,
+    query_embeddings: dict[str, object] | None = None,
+    passage_embeddings: dict[str, object] | None = None,
+):
     required = normalize_skill(requirement)
-    normalized_candidates = [(skill, normalize_skill(skill)) for skill in candidate_skills]
 
+    normalized_candidates = [
+        (skill, normalize_skill(skill))
+        for skill in candidate_skills
+    ]
+
+    # 1. Exact / alias match
     for original, normalized in normalized_candidates:
         if normalized == required:
-            return "match", original, 1.0
+            return "match", original, 1.0, "exact"
 
-
+    # 2. Known deterministic relationships
     for original, normalized in normalized_candidates:
         if _same_related_group(required, normalized):
-            return "partial", original, 0.78
+            return "partial", original, 0.78, "related"
 
+    # 3. Capability matching
+    if (
+        requirement_capabilities
+        and candidate_skill_capabilities
+    ):
+        best_capability_skill = None
+        best_overlap_count = 0
+        best_coverage = 0.0
+
+        for skill in candidate_skills:
+            capabilities = candidate_skill_capabilities.get(
+                skill,
+                [],
+            )
+
+            overlap_count, coverage = _capability_overlap(
+                requirement_capabilities,
+                capabilities,
+            )
+
+            if (
+                overlap_count > best_overlap_count
+                or (
+                    overlap_count == best_overlap_count
+                    and coverage > best_coverage
+                )
+            ):
+                best_capability_skill = skill
+                best_overlap_count = overlap_count
+                best_coverage = coverage
+
+        is_capability_match = (
+            best_overlap_count >= 2
+            or (
+                len(requirement_capabilities) == 1
+                and best_overlap_count == 1
+            )
+        )
+
+        if (
+            best_capability_skill is not None
+            and is_capability_match
+        ):
+            return (
+                "partial",
+                best_capability_skill,
+                best_coverage,
+                "capability",
+            )
+
+    # 4. Fuzzy matching
     best_skill = None
     best_ratio = 0.0
+
     for original, normalized in normalized_candidates:
-        ratio = SequenceMatcher(None, required, normalized).ratio()
+        ratio = SequenceMatcher(
+            None,
+            required,
+            normalized,
+        ).ratio()
+
         if ratio > best_ratio:
             best_ratio = ratio
             best_skill = original
 
     if best_ratio >= 0.88:
-        return "match", best_skill, best_ratio
-    if best_ratio >= 0.68:
-        return "partial", best_skill, best_ratio
+        return "match", best_skill, best_ratio, "fuzzy"
 
-    return "missing", None, best_ratio
+    if best_ratio >= 0.68:
+        return "partial", best_skill, best_ratio, "fuzzy"
+
+    # 5. E5 semantic fallback
+    if (
+        requirement_text
+        and candidate_skill_texts
+        and query_embeddings
+        and passage_embeddings
+    ):
+        (
+            semantic_skill,
+            semantic_score,
+            semantic_margin,
+        ) = find_best_semantic_match(
+            requirement_text,
+            candidate_skill_texts,
+            query_embeddings,
+            passage_embeddings,
+        )
+
+        if (
+            semantic_skill is not None
+            and semantic_score >= SEMANTIC_MIN_SCORE
+            and semantic_margin >= SEMANTIC_MIN_MARGIN
+        ):
+            return (
+                "partial",
+                semantic_skill,
+                semantic_score,
+                "embedding",
+            )
+
+    return "missing", None, best_ratio, "none"
 
 def _calculate_experience(
     candidate_years: float | None,
@@ -163,9 +303,60 @@ def _calculate_english(
     return 0.0, "below"
 
 def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
-    candidate_skill_objects = candidate_profile.get("skills", [])
-    candidate_skills = [item.get("name", "") for item in candidate_skill_objects if item.get("name")]
     requirements = job_profile.get("requirements", [])
+
+    candidate_skill_entries = candidate_profile.get(
+        "skills",
+        []
+    )
+
+    candidate_skills = [
+        item["name"]
+        for item in candidate_skill_entries
+        if item.get("name")
+    ]
+
+
+    candidate_skill_texts = {
+        item["name"]: build_candidate_skill_text(
+            item["name"],
+            item.get("evidence"),
+            item.get("capabilities", []),
+        )
+        for item in candidate_skill_entries
+    }
+
+    candidate_skill_capabilities = {
+        item["name"]: item.get("capabilities", [])
+        for item in candidate_skill_entries
+    }
+
+
+    requirement_texts = {
+        item["skill"]: build_requirement_text(
+            item["skill"],
+            item.get("description"),
+            item.get("capabilities", []),
+        )
+        for item in requirements
+    }
+    requirement_capabilities = {
+        item["skill"]: item.get("capabilities", [])
+        for item in requirements
+    }
+
+    try:
+        query_embeddings = generate_query_embeddings(
+            list(requirement_texts.values())
+        )
+
+        passage_embeddings = generate_passage_embeddings(
+            list(candidate_skill_texts.values())
+        )
+
+    except EmbeddingServiceError:
+        query_embeddings = {}
+        passage_embeddings = {}
 
     weighted_total = 0.0
     weighted_earned = 0.0
@@ -178,10 +369,29 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
 
         importance = requirement.get("importance", "required")
         weight = IMPORTANCE_WEIGHT.get(importance, 1.0)
-        status, candidate_skill, confidence = compare_skill(skill, candidate_skills)
+        status, candidate_skill, confidence, match_method = compare_skill(
+            skill,
+            candidate_skills,
+            requirement_capabilities=requirement_capabilities.get(
+                skill,
+                [],
+            ),
+            candidate_skill_capabilities=candidate_skill_capabilities,
+            requirement_text=requirement_texts.get(skill),
+            candidate_skill_texts=candidate_skill_texts,
+            query_embeddings=query_embeddings,
+            passage_embeddings=passage_embeddings,
+        )
 
 
-        strength = MATCH_VALUE[status]
+        if status == "match":
+            strength = 1.0
+
+        elif status == "partial":
+            strength = confidence
+
+        else:
+            strength = 0.0
 
         weighted_total += weight
         weighted_earned += weight * strength
@@ -193,6 +403,7 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
                 "candidate_skill": candidate_skill,
                 "status": status,
                 "similarity": round(confidence, 2),
+                "match_method": match_method,
                 "earned": round(weight * strength, 3),
                 "possible": weight,
             }

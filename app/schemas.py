@@ -9,6 +9,7 @@ class CandidateSkill(BaseModel):
     name: str
     level: Literal["beginner", "intermediate", "advanced", "unknown"] = "unknown"
     evidence: str = ""
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class CandidateAIProfile(BaseModel):
@@ -23,6 +24,7 @@ class JobRequirement(BaseModel):
     skill: str
     importance: Literal["required", "preferred", "optional"] = "required"
     description: str = ""
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class JobAIProfile(BaseModel):
