@@ -110,6 +110,31 @@ def _capability_overlap(
 
     return overlap_count, coverage
 
+def _compare_capabilities(
+    required_capabilities: list[str],
+    candidate_capabilities: list[str],
+) -> tuple[list[str], list[str]]:
+    if not required_capabilities:
+        return [], []
+
+    normalized_candidate = {
+        normalize_skill(capability)
+        for capability in candidate_capabilities
+    }
+
+    matched = []
+    missing = []
+
+    for capability in required_capabilities:
+        normalized = normalize_skill(capability)
+
+        if normalized in normalized_candidate:
+            matched.append(capability)
+        else:
+            missing.append(capability)
+
+    return matched, missing
+
 def _same_related_group(left: str, right: str) -> bool:
     for group in RELATED_SKILL_GROUPS:
         if left in group and right in group:
@@ -383,6 +408,35 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
             passage_embeddings=passage_embeddings,
         )
 
+        required_caps = requirement_capabilities.get(
+            skill,
+            [],
+        )
+
+        candidate_caps = (
+            candidate_skill_capabilities.get(
+                candidate_skill,
+                [],
+            )
+            if candidate_skill
+            else []
+        )
+
+        if match_method == "exact":
+            matched_capabilities = required_caps
+            missing_capabilities = []
+
+        elif match_method == "capability":
+            matched_capabilities, missing_capabilities = (
+                _compare_capabilities(
+                    required_caps,
+                    candidate_caps,
+                )
+            )
+
+        else:
+            matched_capabilities = []
+            missing_capabilities = []
 
         if status == "match":
             strength = 1.0
@@ -404,6 +458,8 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
                 "status": status,
                 "similarity": round(confidence, 2),
                 "match_method": match_method,
+                "matched_capabilities": matched_capabilities,
+                "missing_capabilities": missing_capabilities,
                 "earned": round(weight * strength, 3),
                 "possible": weight,
             }
