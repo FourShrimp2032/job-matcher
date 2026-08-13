@@ -234,16 +234,59 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
     if english_status == "unknown":
         unknown_fields.append("english_level")
 
-    if final_score >= 80 and len(required_missing) <= 1:
+    if (
+        final_score >= 80
+        and len(required_missing) <= 1
+        and experience_status != "below"
+        and english_status != "below"
+    ):
         recommendation = "APPLY"
-    elif final_score >= 60:
+
+    elif (
+        final_score >= 60
+        and len(required_missing) <= 2
+    ):
         recommendation = "MAYBE"
+
     else:
         recommendation = "SKIP"
+
+    recommendation_reasons = []
+
+    if required_missing:
+        recommendation_reasons.append(
+            f"{len(required_missing)} required skill(s) missing"
+        )
+
+    if required_partial:
+        recommendation_reasons.append(
+            f"{len(required_partial)} required skill(s) partially matched"
+        )
+
+    if experience_status == "unknown":
+        recommendation_reasons.append(
+            "experience duration is unknown"
+        )
+
+    elif experience_status == "below":
+        recommendation_reasons.append(
+            "experience is below the job requirement"
+        )
+
+    if english_status == "unknown":
+        recommendation_reasons.append(
+            "English level is unknown"
+        )
+
+    elif english_status == "below":
+        recommendation_reasons.append(
+            "English level is below the job requirement"
+        )
 
     return {
         "score": final_score,
         "recommendation": recommendation,
+        "recommendation_reasons": recommendation_reasons,
         "skills_score": round(skills_score, 1),
         "experience_score": round(experience_score, 1),
         "experience_status": experience_status,
