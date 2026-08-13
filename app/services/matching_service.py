@@ -55,6 +55,15 @@ RELATED_SKILL_GROUPS = [
         "http api",
         "restful services",
     },
+    {
+        "sql",
+        "sqlite",
+        "postgresql",
+        "mysql",
+        "mariadb",
+        "relational database",
+        "relational databases",
+    },
 ]
 
 def normalize_skill(value: str) -> str:
