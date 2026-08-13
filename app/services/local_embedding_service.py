@@ -84,6 +84,27 @@ def cosine_similarity(
 
     return float(similarity.item())
 
+def build_requirement_text(
+    skill: str,
+    description: str | None = None,
+) -> str:
+    text = f"Technical job requirement: {skill}."
+
+    if description:
+        text += f" Description: {description}"
+
+    return text
+
+def build_candidate_skill_text(
+    name: str,
+    evidence: str | None = None,
+) -> str:
+    text = f"Candidate technical skill: {name}."
+
+    if evidence:
+        text += f" Evidence: {evidence}"
+
+    return text
 
 def find_best_semantic_match(
     requirement: str,
