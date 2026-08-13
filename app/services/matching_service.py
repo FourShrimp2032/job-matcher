@@ -426,11 +426,44 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         required_english,
     )
 
-    final_score = (
-        skills_score * SKILLS_WEIGHT
-        + experience_score * EXPERIENCE_WEIGHT
-        + english_score * ENGLISH_WEIGHT
+    active_scores = [
+        (skills_score, SKILLS_WEIGHT),
+    ]
+
+    if experience_status != "not_required":
+        active_scores.append(
+            (experience_score, EXPERIENCE_WEIGHT)
+        )
+
+    if english_status != "not_required":
+        active_scores.append(
+            (english_score, ENGLISH_WEIGHT)
+        )
+
+    total_weight = sum(
+        weight
+        for _, weight in active_scores
     )
+
+    effective_weights = {
+        "skills": SKILLS_WEIGHT / total_weight,
+        "experience": (
+            EXPERIENCE_WEIGHT / total_weight
+            if experience_status != "not_required"
+            else 0.0
+        ),
+        "english": (
+            ENGLISH_WEIGHT / total_weight
+            if english_status != "not_required"
+            else 0.0
+        ),
+    }
+
+    final_score = sum(
+        score * weight
+        for score, weight in active_scores
+    ) / total_weight
+
     final_score = round(final_score, 1)
 
     required_missing = [
@@ -517,10 +550,17 @@ def calculate_match(candidate_profile: dict, job_profile: dict) -> dict:
         "candidate_experience_years": candidate_years,
         "required_experience_years": required_years,
         "score_weights": {
-                    "skills": SKILLS_WEIGHT,
-                    "experience": EXPERIENCE_WEIGHT,
-                    "english": ENGLISH_WEIGHT,
-                },
+            "base": {
+                "skills": SKILLS_WEIGHT,
+                "experience": EXPERIENCE_WEIGHT,
+                "english": ENGLISH_WEIGHT,
+            },
+            "effective": {
+                "skills": round(effective_weights["skills"], 3),
+                "experience": round(effective_weights["experience"], 3),
+                "english": round(effective_weights["english"], 3),
+            },
+        },
         "required_missing": required_missing,
         "required_partial": required_partial,
         "unknown_fields": unknown_fields,
